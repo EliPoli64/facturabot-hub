@@ -59,7 +59,7 @@ export interface IInventory extends Document {
   currentStock: number;
   purchasePrice: number;      // Precio FOB / Precio base de compra
   landedCost: number;         // Costo real unitario puesto en bodega (Base + Prorrateo de Fletes)
-  salePrice: number;
+  salePrice?: number;
   lastImportId?: mongoose.Types.ObjectId; // ID de la última liquidación de aduanas que afectó el costo
 }
 
@@ -69,7 +69,7 @@ const inventorySchema = new Schema<IInventory>({
   currentStock: { type: Number, required: true, default: 0 },
   purchasePrice: { type: Number, required: true },
   landedCost: { type: Number, required: true }, // Al crear un producto inicial, se iguala a purchasePrice
-  salePrice: { type: Number, required: true },
+  salePrice: { type: Number },
   lastImportId: { type: Schema.Types.ObjectId, ref: 'LandedCostLiquidation' }
 }, { timestamps: true });
 
@@ -144,6 +144,46 @@ const transactionSchema = new Schema<ITransaction>({
     suggestedAccountName: { type: String }
   }
 }, { timestamps: true });
+
+transactionSchema.post('save', async function(doc) {
+  if (!doc.items || doc.items.length === 0) {
+    return;
+  }
+
+  for (const item of doc.items) {
+    // If an SKU is missing, generate one from the first 12 chars of the description.
+    const sku = item.sku || item.description.substring(0, 12).toUpperCase().replace(/\s/g, '-');
+
+    // If we still don't have a SKU (e.g., empty description), we must skip it.
+    if (!sku) {
+      continue;
+    }
+
+    const quantityChange = doc.type === 'PURCHASE' ? item.quantity : -item.quantity;
+
+    if (doc.type === 'PURCHASE') {
+      const purchasePrice = item.unitPriceForeign * doc.exchangeRate;
+      await mongoose.model('Inventory').findOneAndUpdate(
+        { sku: sku },
+        {
+          $inc: { currentStock: quantityChange },
+          $set: {
+            name: item.description,
+            purchasePrice: purchasePrice,
+            landedCost: purchasePrice, // Default landedCost to purchasePrice initially
+          }
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    } else if (doc.type === 'SALE') {
+      // For a sale, just decrement the stock. Do not create the item if it doesn't exist.
+      await mongoose.model('Inventory').updateOne(
+        { sku: sku },
+        { $inc: { currentStock: quantityChange } }
+      );
+    }
+  }
+});
 
 
 // ==========================================

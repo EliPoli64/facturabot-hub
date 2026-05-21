@@ -8,7 +8,7 @@ const genAI = new GoogleGenAI({
 });
 
 // Cambiado a gemini-2.5-flash como modelo base para OCR rápido y estructurado
-const visionModel = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
+const visionModel = process.env.GEMINI_VISION_MODEL || "gemini-2.5-flash";
 
 function normalizeMimeType(file: File): string {
   if (file.type) return file.type;
@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       '  - \'5-1-99-01\' | Gastos No Deducibles (cualquier documento con isDeductibleHacienda: false)',
 
       'Para documentos tipo \'foreign_invoice\' o \'customs_policy\' relacionados con importaciones, extrae los siguientes componentes para el cálculo del costo de importación: Valor FOB, Seguro, Flete internacional, % arancel (para DAI), IVA importación, Almacenaje, Honorarios agente aduanal y Otros cargos. Es CRÍTICO diferenciar entre GASTO y COSTO en las importaciones.',
+      'Para cada línea de producto, si un código de producto o SKU es visible, extráelo en el campo "sku". Si no hay SKU, puedes omitir el campo sku para ese item.',
     ].join('\n');
 
     const userPrompt = `Analiza esta imagen. El tipo de cambio actual para el día de hoy es de ${currentExchangeRate} CRC por 1 USD. Extrae las líneas de productos detalladamente si son visibles.`;
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
         metadata: {
           type: "OBJECT",
           properties: {
-            documentType: { type: "STRING", enum: ["national_pdf", "foreign_invoice", "pos_ticket", "customs_policy"] },
+            documentType: { type: "STRING", enum: ["hacienda_xml", "national_pdf", "foreign_invoice", "pos_ticket", "customs_policy"] },
             origin: { type: "STRING", enum: ["national", "international"] },
             documentId: { type: "STRING" },
             issueDate: { type: "STRING" },
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
           items: {
             type: "OBJECT",
             properties: {
+              sku: { type: "STRING" },
               description: { type: "STRING" },
               quantity: { type: "NUMBER" },
               unitPriceForeign: { type: "NUMBER" },
@@ -158,11 +160,16 @@ export async function POST(req: NextRequest) {
     });
 
     const responseText = response.text;
+    console.log("Gemini API Response:", responseText);
     if (!responseText) {
       throw new Error("Gemini extrajo un cuerpo de texto vacío.");
     }
 
     const extracted = JSON.parse(responseText);
+
+    if (!extracted.metadata) {
+      throw new Error('Invalid AI extraction format');
+    }
 
     // Calcular el gran total en colones basado en la respuesta de la IA
     const rate = extracted.metadata.currency === 'CRC' ? 1.0 : extracted.metadata.exchangeRate || currentExchangeRate;

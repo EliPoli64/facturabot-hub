@@ -43,27 +43,99 @@ export async function POST(req: NextRequest) {
       subTotal += amount;
       taxAmount += itemTax;
 
-      // Update inventory atomically
-      // We use the detail as a proxy for name/sku if SKU isn't explicitly in the simplified XML
-      await Inventory.findOneAndUpdate(
-        { name: detail },
-        { 
-          $inc: { currentStock: type === 'PURCHASE' ? quantity : -quantity },
-          $set: { 
-            [type === 'PURCHASE' ? 'purchasePrice' : 'salePrice']: unitPrice,
-            sku: detail.substring(0, 10).toUpperCase().replace(/\s/g, '') // Generate a mock SKU
-          }
-        },
-        { upsert: true, new: true }
-      );
+
     }
 
     const transaction = await Transaction.create({
       type,
       source: 'XML',
-      merchantName: type === 'PURCHASE' ? merchantName : receiverName,
-      subTotal,
-      taxAmount,
+
+      documentType: 'hacienda_xml',
+
+      origin: 'national',
+
+      documentId:
+        root.Clave ||
+        `XML-${Date.now()}`,
+
+      merchantName:
+        merchantName ||
+
+        'Unknown Merchant',
+
+      merchantTaxId:
+        root.Emisor?.Identificacion?.Numero ||
+
+        '000000000',
+
+      currency:
+        root.CodigoTipoMoneda?.CodigoMoneda ||
+
+        'CRC',
+
+      exchangeRate:
+        parseFloat(
+          root.CodigoTipoMoneda?.TipoCambio || '1'
+        ),
+
+      items: items.map((item: any) => ({
+        sku:
+          item.Codigo?.Codigo ||
+
+          undefined,
+
+        description:
+          item.Detalle ||
+
+          'Producto',
+
+        quantity:
+          parseFloat(item.Cantidad || '1'),
+
+        unitPriceForeign:
+          parseFloat(item.PrecioUnitario || '0'),
+
+        discount:
+          parseFloat(item.MontoDescuento || '0'),
+
+        taxAmountForeign:
+          item.Impuesto
+            ? parseFloat(item.Impuesto.Monto || '0')
+            : 0,
+
+        totalLineForeign:
+          parseFloat(item.MontoTotalLinea || '0'),
+      })),
+
+      subTotalForeign: subTotal,
+
+      taxAmountForeign: taxAmount,
+
+      grandTotalForeign:
+        subTotal + taxAmount,
+
+      grandTotalCrc:
+        (subTotal + taxAmount) *
+        parseFloat(
+          root.CodigoTipoMoneda?.TipoCambio || '1'
+        ),
+
+      fiscalAnalysis: {
+        purchaseType:
+          'product_purchase',
+
+        isDeductibleHacienda:
+          true,
+
+        haciendaJustification:
+          'Factura electrónica nacional registrada desde XML Hacienda.',
+
+        suggestedAccountCode:
+          '1-1-03-01',
+
+        suggestedAccountName:
+          'Inventario de Mercancías',
+      },
     });
 
     return NextResponse.json({ 

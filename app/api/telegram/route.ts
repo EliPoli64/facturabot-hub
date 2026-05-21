@@ -53,7 +53,7 @@ bot.on(message('photo'), async (ctx) => {
       });
       const result = await apiRes.json();
       
-      ctx.reply(`Receipt Extracted:\nMerchant: ${result.data.merchantName}\nTotal: ${result.data.subTotal + result.data.taxAmount}\nType: ${result.data.type}`);
+      ctx.reply(`Receipt Extracted:\nMerchant: ${result.data.merchantName}\nTotal: ${result.data.grandTotalCrc} CRC\nType: ${result.data.type}`);
     }
   } catch (error) {
     ctx.reply('Error processing image.');

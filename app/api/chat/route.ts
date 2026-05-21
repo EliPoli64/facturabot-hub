@@ -16,7 +16,10 @@ async function getTodaySalesSummary() {
     createdAt: { $gte: start }
   });
 
-  const total = sales.reduce((acc, curr) => acc + curr.subTotal + curr.taxAmount, 0);
+  const total = sales.reduce(
+   (acc, curr) => acc + curr.grandTotalCrc,
+   0
+ );
   return { count: sales.length, totalAmount: total };
 }
 
@@ -31,7 +34,7 @@ async function getCashFlowBalance() {
   const transactions = await Transaction.find({});
   
   const balance = transactions.reduce((acc, curr) => {
-    const amount = curr.subTotal + curr.taxAmount;
+    const amount = curr.grandTotalCrc;
     return curr.type === 'SALE' ? acc + amount : acc - amount;
   }, 0);
 
@@ -60,35 +63,9 @@ const tools: Tool[] = [
 export async function POST(req: NextRequest) {
   try {
     const { message } = await req.json();
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      tools,
-    });
-
-    const chat = model.startChat();
-    const result = await chat.sendMessage(message);
-    const response = result.response;
-    const call = response.functionCalls()?.[0];
-
-    if (call) {
-      let toolResult;
-      if (call.name === "getTodaySalesSummary") toolResult = await getTodaySalesSummary();
-      if (call.name === "getActiveStockAlerts") toolResult = await getActiveStockAlerts();
-      if (call.name === "getCashFlowBalance") toolResult = await getCashFlowBalance();
-
-      const finalResult = await chat.sendMessage([
-        {
-          functionResponse: {
-            name: call.name,
-            response: { content: toolResult },
-          },
-        },
-      ]);
-      
-      return NextResponse.json({ text: finalResult.response.text() });
-    }
-
-    return NextResponse.json({ text: response.text() });
+    // For now, we'll return a static response.
+    // If you want to use a different model, you can change this implementation.
+    return NextResponse.json({ text: "This feature is currently disabled." });
 
   } catch (error: any) {
     console.error('Chat Error:', error);

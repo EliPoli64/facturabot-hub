@@ -106,22 +106,7 @@ const currencyFormatter = new Intl.NumberFormat('es-CR', {
   maximumFractionDigits: 0,
 });
 
-const seedInventory: InventoryItem[] = [
-  { sku: 'AUR-001', name: 'Auriculares Nova Pro', currentStock: 4, purchasePrice: 16500, salePrice: 24900, status: 'lowStock' },
-  { sku: 'CAF-002', name: 'Cafetera Compact CR', currentStock: 17, purchasePrice: 22900, salePrice: 34900, status: 'ok' },
-  { sku: 'LED-003', name: 'Tira LED Premium', currentStock: 7, purchasePrice: 6200, salePrice: 9900, status: 'lowStock' },
-  { sku: 'POS-004', name: 'Lector POS Mini', currentStock: 12, purchasePrice: 28900, salePrice: 42900, status: 'ok' },
-  { sku: 'CAB-005', name: 'Cable USB-C 2m', currentStock: 38, purchasePrice: 1800, salePrice: 4500, status: 'ok' },
-  { sku: 'IMP-006', name: 'Impresora Termica', currentStock: 3, purchasePrice: 71500, salePrice: 92900, status: 'lowStock' },
-  { sku: 'MON-007', name: 'Monitor 24 IPS', currentStock: 6, purchasePrice: 68900, salePrice: 89900, status: 'lowStock' },
-  { sku: 'TEC-008', name: 'Teclado Wireless Slim', currentStock: 21, purchasePrice: 8400, salePrice: 14900, status: 'ok' },
-  { sku: 'MSE-009', name: 'Mouse Ergonomico', currentStock: 15, purchasePrice: 4900, salePrice: 9900, status: 'ok' },
-  { sku: 'HUB-010', name: 'Hub USB-C 7 en 1', currentStock: 8, purchasePrice: 13900, salePrice: 24900, status: 'ok' },
-  { sku: 'CAM-011', name: 'Camara Web FHD', currentStock: 11, purchasePrice: 15900, salePrice: 26900, status: 'ok' },
-  { sku: 'BTR-012', name: 'Bateria Externa 10K', currentStock: 5, purchasePrice: 11900, salePrice: 19900, status: 'lowStock' },
-  { sku: 'ETQ-013', name: 'Etiquetadora Bluetooth', currentStock: 9, purchasePrice: 21400, salePrice: 33900, status: 'ok' },
-  { sku: 'RCP-014', name: 'Rollo Papel POS', currentStock: 44, purchasePrice: 950, salePrice: 2200, status: 'ok' },
-];
+
 
 const quickChips = [
   '📊 Resumen de hoy',
@@ -285,7 +270,7 @@ export default function DashboardPage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [isDesktop, setIsDesktop] = useState(false);
   const [businessName, setBusinessName] = useState('FacturaBot CR');
-  const [inventoryItems] = useState<InventoryItem[]>(seedInventory);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleRows, setVisibleRows] = useState(10);
@@ -411,11 +396,18 @@ export default function DashboardPage() {
     const alertsPrompt =
       'Usa getActiveStockAlerts y responde solo un JSON minificado con un arreglo llamado alerts. Cada item debe tener sku y message.';
 
-    const [salesResult, balanceResult, alertsResult] = await Promise.allSettled([
+    const [salesResult, balanceResult, alertsResult, inventoryResult] = await Promise.allSettled([
       requestChat(salesPrompt),
       requestChat(balancePrompt),
       requestChat(alertsPrompt),
+      fetch('/api/inventory'),
     ]);
+
+    let fetchedInventory: InventoryItem[] = [];
+    if (inventoryResult.status === 'fulfilled') {
+      fetchedInventory = await inventoryResult.value.json();
+      setInventoryItems(fetchedInventory);
+    }
 
     if (salesResult.status === 'fulfilled' && balanceResult.status === 'fulfilled') {
       const salesJson = parseFirstJson<{ count?: number; totalAmount?: number }>(salesResult.value);
@@ -452,7 +444,7 @@ export default function DashboardPage() {
       const rawAlerts = Array.isArray(parsed) ? parsed : parsed?.alerts || [];
 
       const mappedAlerts: AlertItem[] = rawAlerts.map((item) => {
-        const product = inventoryItems.find((inventoryItem) => inventoryItem.sku === item.sku);
+        const product = fetchedInventory.find((inventoryItem) => inventoryItem.sku === item.sku);
         const estimatedDays = product ? Math.max(1, Math.ceil(product.currentStock / 2)) : 3;
 
         return {
@@ -485,7 +477,7 @@ export default function DashboardPage() {
 
     setKpiLoading(false);
     setAlertsLoading(false);
-  }, [inventoryItems]);
+  }, []);
 
   useEffect(() => {
     void loadDashboardData();
@@ -1003,7 +995,7 @@ export default function DashboardPage() {
                     >
                       {renderMessageContent(message.content)}
                     </div>
-                    <p className="mt-1 px-1 text-xs text-slate-500">{formatTimestamp(message.timestamp)}</p>
+                    <p className="mt-1 px-1 text-xs text-slate-500" suppressHydrationWarning>{formatTimestamp(message.timestamp)}</p>
                   </div>
                 </div>
               </div>
