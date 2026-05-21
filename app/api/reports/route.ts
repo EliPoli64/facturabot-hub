@@ -8,11 +8,11 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get('type') || 'pnl';
 
-    if (type === 'pnl') {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
 
+    if (type === 'pnl') {
       const [monthlyIncome, yearlyIncome, monthlyExpenses, yearlyExpenses] = await Promise.all([
         Transaction.aggregate([
           { $match: { type: 'SALE', createdAt: { $gte: startOfMonth } } },
@@ -52,6 +52,105 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    if (type === 'trends') {
+      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+      const [monthlyIncomeAgg, monthlyExpensesAgg, monthlyCounts] = await Promise.all([
+        Transaction.aggregate([
+          { $match: { type: 'SALE', createdAt: { $gte: sixMonthsAgo } } },
+          { $group: {
+            _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+            total: { $sum: '$grandTotalCrc' },
+            count: { $sum: 1 },
+          }},
+          { $sort: { '_id.year': 1, '_id.month': 1 } },
+        ]),
+        Transaction.aggregate([
+          { $match: { type: 'PURCHASE', createdAt: { $gte: sixMonthsAgo } } },
+          { $group: {
+            _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+            total: { $sum: '$grandTotalCrc' },
+          }},
+          { $sort: { '_id.year': 1, '_id.month': 1 } },
+        ]),
+        Transaction.aggregate([
+          { $match: { createdAt: { $gte: sixMonthsAgo } } },
+          { $group: {
+            _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+            count: { $sum: 1 },
+          }},
+          { $sort: { '_id.year': 1, '_id.month': 1 } },
+        ]),
+      ]);
+
+      const months: { label: string; income: number; expenses: number; count: number }[] = [];
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        const inc = monthlyIncomeAgg.find(
+          (r: any) => r._id.year === d.getFullYear() && r._id.month === d.getMonth() + 1,
+        );
+        const exp = monthlyExpensesAgg.find(
+          (r: any) => r._id.year === d.getFullYear() && r._id.month === d.getMonth() + 1,
+        );
+        const cnt = monthlyCounts.find(
+          (r: any) => r._id.year === d.getFullYear() && r._id.month === d.getMonth() + 1,
+        );
+        months.push({
+          label: d.toLocaleDateString('es-CR', { month: 'short' }),
+          income: inc?.total || 0,
+          expenses: exp?.total || 0,
+          count: cnt?.count || 0,
+        });
+      }
+
+      return NextResponse.json({ type: 'trends', months });
+    }
+
+    if (type === 'top-products') {
+      const yearStart = new Date(now.getFullYear(), 0, 1);
+      const [topSales, topPurchases] = await Promise.all([
+        Transaction.aggregate([
+          { $match: { type: 'SALE', createdAt: { $gte: yearStart } } },
+          { $unwind: '$items' },
+          { $group: {
+            _id: { sku: '$items.sku', name: '$items.description' },
+            totalQuantity: { $sum: '$items.quantity' },
+            totalRevenue: { $sum: { $multiply: ['$items.quantity', '$items.unitPriceForeign'] } },
+          }},
+          { $sort: { totalRevenue: -1 } },
+          { $limit: 5 },
+        ]),
+        Transaction.aggregate([
+          { $match: { type: 'PURCHASE', origin: 'international' } },
+          { $unwind: '$items' },
+          { $group: {
+            _id: { sku: '$items.sku', name: '$items.description' },
+            totalQuantity: { $sum: '$items.quantity' },
+            totalCost: { $sum: { $multiply: ['$items.quantity', '$items.unitPriceForeign'] } },
+          }},
+          { $sort: { totalCost: -1 } },
+          { $limit: 5 },
+        ]),
+      ]);
+
+      return NextResponse.json({
+        type: 'top-products',
+        topSales: topSales.map((r: any) => ({
+          sku: r._id.sku,
+          name: r._id.name,
+          quantity: r.totalQuantity,
+          revenue: r.totalRevenue,
+        })),
+        topPurchases: topPurchases.map((r: any) => ({
+          sku: r._id.sku,
+          name: r._id.name,
+          quantity: r.totalQuantity,
+          cost: r.totalCost,
+        })),
+      });
+    }
+
     if (type === 'balance') {
       const [inventoryAgg, totalIncome, totalExpenses] = await Promise.all([
         Inventory.aggregate([
@@ -84,10 +183,6 @@ export async function GET(req: NextRequest) {
     }
 
     if (type === 'iva') {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const startOfYear = new Date(now.getFullYear(), 0, 1);
-
       const [monthlyIva, yearlyIva] = await Promise.all([
         Transaction.aggregate([
           { $match: { createdAt: { $gte: startOfMonth } } },
@@ -127,7 +222,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ error: 'Invalid report type. Use pnl, balance, or iva.' }, { status: 400 });
+    return NextResponse.json({ error: 'Invalid report type. Use pnl, trends, top-products, balance, or iva.' }, { status: 400 });
   } catch (error) {
     console.error('Report error:', error);
     return NextResponse.json({ error: 'Error generating report' }, { status: 500 });
