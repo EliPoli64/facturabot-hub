@@ -10,6 +10,10 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --animate-fade-in: fadeIn;
+  --animate-bounce-dot: bounceDot;
+  --animate-glow-pulse: glowPulse;
+  --animate-flash: flashHighlight 0.6s ease-out;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,6 +47,7 @@ body {
 }
 
 @keyframes bounceDot {
+
   0%,
   80%,
   100% {
@@ -53,6 +58,21 @@ body {
   40% {
     transform: translateY(-4px);
     opacity: 1;
+  }
+}
+
+@keyframes flashHighlight {
+  0% {
+    background-color: transparent;
+    color: rgb(52, 211, 153);
+  }
+  30% {
+    background-color: rgba(16, 185, 129, 0.4);
+    color: rgb(255, 255, 255);
+  }
+  100% {
+    background-color: transparent;
+    color: rgb(52, 211, 153);
   }
 }
 
