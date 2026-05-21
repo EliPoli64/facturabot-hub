@@ -1,15 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Parser } from 'xml2js';
 import dbConnect from '@/lib/db';
-import { Inventory, Transaction } from '@/models/Schemas';
+import { Transaction, syncTransactionItemsToInventory } from '@/models/Schemas';
 
-const parser = new Parser({ explicitArray: false });
+const parser = new Parser({
+  explicitArray: false,
+  trim: true,
+  normalize: true,
+});
+
+function stripBOM(buf: Buffer): Buffer {
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+    return buf.subarray(3);
+  }
+  return buf;
+}
 
 export async function POST(req: NextRequest) {
   try {
     await dbConnect();
-    const xmlData = await req.text();
-    const result = await parser.parseStringPromise(xmlData);
+
+    const contentType = req.headers.get('content-type') || '';
+    let raw: Buffer;
+
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await req.formData();
+      const file = formData.get('file') as File | null;
+      if (!file) {
+        return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
+      }
+      raw = Buffer.from(await file.arrayBuffer());
+    } else {
+      raw = Buffer.from(await req.arrayBuffer());
+    }
+
+    const result = await parser.parseStringPromise(stripBOM(raw));
 
     // Costa Rican Hacienda XML structure parsing (simplified)
     const root = result.FacturaElectronica || result.TiqueteElectronico || result.NotaCreditoElectronica;
@@ -137,6 +162,8 @@ export async function POST(req: NextRequest) {
           'Inventario de Mercancías',
       },
     });
+
+    await syncTransactionItemsToInventory(transaction.items, transaction.type, transaction.exchangeRate);
 
     return NextResponse.json({ 
       message: 'XML processed successfully', 

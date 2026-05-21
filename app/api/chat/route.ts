@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI, Tool } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType, Tool } from '@google/generative-ai';
 import dbConnect from '@/lib/db';
 import { Inventory, Transaction, Alert } from '@/models/Schemas';
 
@@ -41,6 +41,79 @@ async function getCashFlowBalance() {
   return { balance };
 }
 
+async function getItemPriceHistory(query: string) {
+  await dbConnect();
+
+  const invItems = await Inventory.find({
+    $or: [
+      { sku: { $regex: query, $options: 'i' } },
+      { name: { $regex: query, $options: 'i' } },
+    ],
+  });
+
+  if (invItems.length === 0) {
+    const txItems = await Transaction.find(
+      { 'items.description': { $regex: query, $options: 'i' } },
+      { 'items.$': 1, type: 1, createdAt: 1, merchantName: 1, currency: 1, exchangeRate: 1 },
+    ).sort({ createdAt: -1 }).limit(20);
+
+    if (txItems.length === 0) {
+      return { found: false, message: `No se encontraron transacciones para "${query}".` };
+    }
+
+    const prices = txItems.map(tx => {
+      const item = tx.items[0];
+      return {
+        date: (tx as any).createdAt,
+        type: tx.type,
+        merchant: tx.merchantName,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPriceForeign,
+        currency: tx.currency,
+        totalLine: item.totalLineForeign,
+      };
+    });
+
+    return { found: true, matchedBy: 'description', items: prices };
+  }
+
+  const skus = invItems.map(i => i.sku);
+  const name = invItems[0].name;
+
+  const transactions = await Transaction.find(
+    { 'items.sku': { $in: skus } },
+  ).sort({ createdAt: -1 }).limit(30);
+
+  const prices = transactions.flatMap(tx =>
+    tx.items
+      .filter(item => skus.includes(item.sku || ''))
+      .map(item => ({
+        date: (tx as any).createdAt,
+        type: tx.type,
+        merchant: tx.merchantName,
+        sku: item.sku,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPriceForeign,
+        currency: tx.currency,
+        exchangeRate: tx.exchangeRate,
+        totalLine: item.totalLineForeign,
+      }))
+  );
+
+  return {
+    found: true,
+    matchedBy: 'sku',
+    itemName: name,
+    skus,
+    currentStock: invItems[0].currentStock,
+    currentSalePrice: invItems[0].salePrice,
+    currentPurchasePrice: invItems[0].purchasePrice,
+    history: prices,
+  };
+}
+
 const tools: Tool[] = [
   {
     functionDeclarations: [
@@ -55,18 +128,90 @@ const tools: Tool[] = [
       {
         name: "getCashFlowBalance",
         description: "Calculates the total cash flow balance (Sales - Purchases).",
-      }
+      },
+      {
+        name: "getItemPriceHistory",
+        description: "Busca el historial de precios de compra/venta de un producto por su SKU o nombre.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            query: {
+              type: SchemaType.STRING,
+              description: "SKU o nombre del producto a buscar.",
+            },
+          },
+          required: ["query"],
+        },
+      },
     ],
   },
 ];
 
+const SYSTEM_INSTRUCTION = `Eres FacturaBot, el asistente de inteligencia de negocios para retail en Costa Rica.
+Hablas español y responded de forma clara y concisa basada en datos reales.
+Puedes consultar ventas del día, alertas de inventario, saldo de caja e historial de precios de productos usando las herramientas disponibles.
+Para consultar precios históricos usa getItemPriceHistory con el SKU o nombre del producto.
+Si no tienes una herramienta para responder, indícalo amablemente.`;
+
+const functionHandlers: Record<string, (args?: Record<string, unknown>) => Promise<unknown>> = {
+  getTodaySalesSummary: () => getTodaySalesSummary(),
+  getActiveStockAlerts: () => getActiveStockAlerts(),
+  getCashFlowBalance: () => getCashFlowBalance(),
+  getItemPriceHistory: (args) => getItemPriceHistory(args?.query as string),
+};
+
 export async function POST(req: NextRequest) {
   try {
     const { message } = await req.json();
-    // For now, we'll return a static response.
-    // If you want to use a different model, you can change this implementation.
-    return NextResponse.json({ text: "This feature is currently disabled." });
 
+    if (!message || typeof message !== 'string') {
+      return NextResponse.json({ error: 'Message is required' }, { status: 400 });
+    }
+
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      systemInstruction: SYSTEM_INSTRUCTION,
+      tools,
+    });
+
+    const chat = model.startChat();
+    let response = await chat.sendMessage(message);
+    let responseText = response.response.text() || '';
+
+    const MAX_TURNS = 5;
+    let turn = 0;
+
+    while (response.response.functionCalls() && turn < MAX_TURNS) {
+      const calls = response.response.functionCalls()!;
+      const results: Record<string, unknown> = {};
+
+      for (const call of calls) {
+        const handler = functionHandlers[call.name];
+        if (handler) {
+          results[call.name] = await handler(call.args as Record<string, unknown> | undefined);
+        }
+      }
+
+      const resultParts = calls.map((call) => ({
+        functionResponse: {
+          name: call.name,
+          response: {
+            name: call.name,
+            content: typeof results[call.name] === 'object' && !Array.isArray(results[call.name])
+              ? results[call.name] as Record<string, unknown>
+              : { data: results[call.name] },
+          },
+        },
+      }));
+
+      response = await chat.sendMessage(resultParts);
+      const newText = response.response.text();
+      if (newText) responseText = newText;
+      turn++;
+    }
+
+    const finalText = response.response.text();
+    return NextResponse.json({ text: finalText || responseText || 'No se pudo generar una respuesta.' });
   } catch (error: any) {
     console.error('Chat Error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

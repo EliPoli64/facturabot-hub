@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import dbConnect from '@/lib/db';
-import { Transaction } from '@/models/Schemas';
+import { Transaction, syncTransactionItemsToInventory } from '@/models/Schemas';
 
 const genAI = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
@@ -199,6 +199,8 @@ export async function POST(req: NextRequest) {
         suggestedAccountName: extracted.fiscalAnalysis.suggestedAccountName,
       }
     });
+
+    await syncTransactionItemsToInventory(transaction.items, transaction.type, transaction.exchangeRate);
 
     return NextResponse.json({
       message: 'Image processed and structured successfully',

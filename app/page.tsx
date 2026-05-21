@@ -11,6 +11,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   AlertCircle,
   Bell,
@@ -21,6 +23,9 @@ import {
   ChevronUp,
   CircleAlert,
   Database,
+  Download,
+  FileDown,
+  FileSpreadsheet,
   ImageUp,
   Loader2,
   Moon,
@@ -845,7 +850,7 @@ export default function DashboardPage() {
   function renderMessageContent(content: string): ReactNode {
     const parts = content.split(/(₡\s?\d[\d.,]*)/g);
 
-    return parts.map((part, index) => {
+    const markdownParts = parts.map((part, index) => {
       if (/^₡\s?\d[\d.,]*$/.test(part)) {
         return (
           <span
@@ -857,8 +862,14 @@ export default function DashboardPage() {
         );
       }
 
-      return <span key={`${part}-${index}`}>{part}</span>;
+      return (
+        <span key={`${part}-${index}`} className="[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-semibold [&_strong]:text-slate-100 [&_hr]:border-slate-700 [&_hr]:my-2 [&_p]:leading-6 [&_p]:my-0 [&_code]:rounded [&_code]:bg-slate-700 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm [&_pre>code]:bg-slate-900 [&_pre]:rounded-lg [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_a]:text-indigo-400 [&_a]:underline">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{part}</ReactMarkdown>
+        </span>
+      );
     });
+
+    return <>{markdownParts}</>;
   }
 
   function renderKpiCard(
@@ -871,7 +882,7 @@ export default function DashboardPage() {
   ): ReactNode {
     if (kpiLoading) {
       return (
-        <div className="min-w-[160px] rounded-xl border border-slate-200/80 bg-white/95 p-5 shadow-sm shadow-slate-200/50 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90 dark:shadow-black/20">
+        <div className="w-full min-w-0 rounded-xl border border-slate-200/80 bg-white/95 p-5 shadow-sm shadow-slate-200/50 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90 dark:shadow-black/20">
           <div className="animate-pulse space-y-4">
             <div className="h-4 w-24 rounded-md bg-slate-200 dark:bg-slate-800" />
             <div className="h-8 w-32 rounded-md bg-slate-200 dark:bg-slate-800" />
@@ -1175,17 +1186,26 @@ export default function DashboardPage() {
                     Mostrando {visibleInventory.length} de {filteredInventory.length} productos
                   </p>
                 </div>
-                <div className="relative w-full sm:w-72">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={searchTerm}
-                    onChange={(event) => {
-                      setSearchTerm(event.target.value);
-                      setVisibleRows(10);
-                    }}
-                    placeholder="Buscar por SKU o nombre"
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-slate-100 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
+                <div className="flex items-center gap-2">
+                  <a
+                    href="/api/export/inventory?format=pdf"
+                    aria-label="Exportar inventario PDF"
+                    className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700"
+                  >
+                    <FileDown className="h-4 w-4 text-indigo-500" />
+                  </a>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      value={searchTerm}
+                      onChange={(event) => {
+                        setSearchTerm(event.target.value);
+                        setVisibleRows(10);
+                      }}
+                      placeholder="Buscar por SKU o nombre"
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-100 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1268,14 +1288,48 @@ export default function DashboardPage() {
                   Operacion comercial en tiempo real para Costa Rica.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void loadDashboardData()}
-                aria-label="Refrescar metricas"
-                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700"
-              >
-                <RefreshCw className={`h-4 w-4 ${kpiLoading || alertsLoading ? 'animate-spin' : ''}`} />
-              </button>
+              <div className="flex items-center gap-1.5">
+                <div className="group relative">
+                  <button
+                    type="button"
+                    aria-label="Exportar"
+                    className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700"
+                  >
+                    <Download className="h-4 w-4" />
+                  </button>
+                  <div className="absolute right-0 top-full z-50 mt-1 hidden w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 group-focus-within:block group-hover:block">
+                    <a
+                      href="/api/export/transactions?format=xlsx"
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
+                      Transacciones XLSX
+                    </a>
+                    <a
+                      href="/api/export/transactions?format=pdf"
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <FileDown className="h-4 w-4 text-rose-500" />
+                      Transacciones PDF
+                    </a>
+                    <a
+                      href="/api/export/inventory?format=pdf"
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <FileDown className="h-4 w-4 text-indigo-500" />
+                      Inventario PDF
+                    </a>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadDashboardData()}
+                  aria-label="Refrescar metricas"
+                  className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 shadow-sm transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700"
+                >
+                  <RefreshCw className={`h-4 w-4 ${kpiLoading || alertsLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
             </div>
 
             {sectionErrors.kpis ? (
@@ -1283,7 +1337,7 @@ export default function DashboardPage() {
                 {sectionErrors.kpis}
               </div>
             ) : (
-              <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-2 md:px-0 xl:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-2">
                 {renderKpiCard(
                   'Ventas del dia',
                   formatCurrency(kpiData.salesToday),

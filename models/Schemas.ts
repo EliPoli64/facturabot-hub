@@ -85,7 +85,7 @@ interface IFiscalAnalysis {
   suggestedAccountName: string;
 }
 
-interface ITransactionItem {
+export interface ITransactionItem {
   sku?: string;
   description: string;
   quantity: number;
@@ -145,45 +145,50 @@ const transactionSchema = new Schema<ITransaction>({
   }
 }, { timestamps: true });
 
-transactionSchema.post('save', async function(doc) {
-  if (!doc.items || doc.items.length === 0) {
-    return;
-  }
+export async function syncTransactionItemsToInventory(
+  items: ITransactionItem[],
+  type: 'PURCHASE' | 'SALE',
+  exchangeRate: number,
+): Promise<void> {
+  if (!items || items.length === 0) return;
 
-  for (const item of doc.items) {
-    // If an SKU is missing, generate one from the first 12 chars of the description.
+  for (const item of items) {
     const sku = item.sku || item.description.substring(0, 12).toUpperCase().replace(/\s/g, '-');
 
-    // If we still don't have a SKU (e.g., empty description), we must skip it.
-    if (!sku) {
-      continue;
-    }
+    if (!sku) continue;
 
-    const quantityChange = doc.type === 'PURCHASE' ? item.quantity : -item.quantity;
+    const quantityChange = type === 'PURCHASE' ? item.quantity : -item.quantity;
 
-    if (doc.type === 'PURCHASE') {
-      const purchasePrice = item.unitPriceForeign * doc.exchangeRate;
-      await mongoose.model('Inventory').findOneAndUpdate(
-        { sku: sku },
+    if (type === 'PURCHASE') {
+      const purchasePrice = item.unitPriceForeign * exchangeRate;
+      await Inventory.findOneAndUpdate(
+        { sku },
         {
           $inc: { currentStock: quantityChange },
           $set: {
             name: item.description,
-            purchasePrice: purchasePrice,
-            landedCost: purchasePrice, // Default landedCost to purchasePrice initially
-          }
+            purchasePrice,
+            landedCost: purchasePrice,
+          },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, new: true, setDefaultsOnInsert: true },
       );
-    } else if (doc.type === 'SALE') {
-      // For a sale, just decrement the stock. Do not create the item if it doesn't exist.
-      await mongoose.model('Inventory').updateOne(
-        { sku: sku },
-        { $inc: { currentStock: quantityChange } }
+    } else {
+      const salePrice = item.unitPriceForeign * exchangeRate;
+      await Inventory.findOneAndUpdate(
+        { sku },
+        {
+          $inc: { currentStock: quantityChange },
+          $set: {
+            name: item.description,
+            salePrice,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
       );
     }
   }
-});
+}
 
 
 // ==========================================
