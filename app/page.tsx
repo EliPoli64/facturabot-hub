@@ -389,17 +389,9 @@ export default function DashboardPage() {
       alerts: null,
     }));
 
-    const salesPrompt =
-      'Usa getTodaySalesSummary y responde solo un JSON minificado con estas llaves camelCase: count,totalAmount.';
-    const balancePrompt =
-      'Usa getCashFlowBalance y responde solo un JSON minificado con esta llave camelCase: balance.';
-    const alertsPrompt =
-      'Usa getActiveStockAlerts y responde solo un JSON minificado con un arreglo llamado alerts. Cada item debe tener sku y message.';
-
-    const [salesResult, balanceResult, alertsResult, inventoryResult] = await Promise.allSettled([
-      requestChat(salesPrompt),
-      requestChat(balancePrompt),
-      requestChat(alertsPrompt),
+    const [statsResult, alertsResult, inventoryResult] = await Promise.allSettled([
+      fetch('/api/stats'),
+      fetch('/api/alerts'),
       fetch('/api/inventory'),
     ]);
 
@@ -409,24 +401,18 @@ export default function DashboardPage() {
       setInventoryItems(fetchedInventory);
     }
 
-    if (salesResult.status === 'fulfilled' && balanceResult.status === 'fulfilled') {
-      const salesJson = parseFirstJson<{ count?: number; totalAmount?: number }>(salesResult.value);
-      const balanceJson = parseFirstJson<{ balance?: number }>(balanceResult.value);
-
-      const salesCountToday = Number(salesJson?.count ?? 0);
-      const salesToday = Number(salesJson?.totalAmount ?? 0);
-      const balance = Number(balanceJson?.balance ?? 0);
-      const purchasesToday = Math.max(0, Math.round(salesCountToday * 0.35));
-
+    if (statsResult.status === 'fulfilled') {
+      const stats = await statsResult.value.json();
       setMongoConnected(true);
       setKpiData((current) => ({
         ...current,
-        salesToday,
-        balance,
-        salesCountToday,
-        purchasesToday,
-        transactionsToday: salesCountToday + purchasesToday,
-        lastUpdatedMinutes: 1,
+        salesToday: stats.salesToday ?? 0,
+        balance: stats.balance ?? 0,
+        salesCountToday: stats.salesCountToday ?? 0,
+        purchasesToday: stats.purchasesToday ?? 0,
+        transactionsToday: stats.transactionsToday ?? 0,
+        deltaVsYesterday: stats.deltaVsYesterday ?? 0,
+        lastUpdatedMinutes: stats.lastUpdatedMinutes ?? 1,
       }));
     } else {
       setMongoConnected(false);
@@ -437,13 +423,9 @@ export default function DashboardPage() {
     }
 
     if (alertsResult.status === 'fulfilled') {
-      const parsed =
-        parseFirstJson<{ alerts?: Array<{ sku?: string; message?: string }> }>(alertsResult.value) ||
-        parseFirstJson<Array<{ sku?: string; message?: string }>>(alertsResult.value);
+      const rawAlerts = await alertsResult.value.json();
 
-      const rawAlerts = Array.isArray(parsed) ? parsed : parsed?.alerts || [];
-
-      const mappedAlerts: AlertItem[] = rawAlerts.map((item) => {
+      const mappedAlerts: AlertItem[] = rawAlerts.map((item: { sku?: string; message?: string }) => {
         const product = fetchedInventory.find((inventoryItem) => inventoryItem.sku === item.sku);
         const estimatedDays = product ? Math.max(1, Math.ceil(product.currentStock / 2)) : 3;
 
