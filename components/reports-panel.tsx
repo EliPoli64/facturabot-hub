@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { BarChart3, TrendingDown, TrendingUp, Wallet, Receipt, Package } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { BarChart3, TrendingDown, TrendingUp, Wallet, Receipt, Package, Monitor, RefreshCw } from 'lucide-react';
 import { formatCurrency } from '@/lib/dashboard-utils';
 
 interface TrendMonth {
@@ -49,38 +49,72 @@ interface IvaData {
   year: { collected: number; paid: number; netPayable: number };
 }
 
+interface PosSystemStatus {
+  id: string;
+  name: string;
+  terminalCount: number;
+  status: 'connected' | 'disconnected' | 'error';
+  lastSync: string | null;
+  transactionsCount: number;
+  totalAmount: number;
+}
+
+interface PosStatusData {
+  systems: PosSystemStatus[];
+  summary: { totalTransactions: number; todayTransactions: number; todayTotal: number };
+}
+
 export default function ReportsPanel() {
   const [pnl, setPnl] = useState<PnlData | null>(null);
   const [balance, setBalance] = useState<BalanceData | null>(null);
   const [iva, setIva] = useState<IvaData | null>(null);
   const [trends, setTrends] = useState<TrendsData | null>(null);
   const [topProducts, setTopProducts] = useState<TopProductsData | null>(null);
+  const [posStatus, setPosStatus] = useState<PosStatusData | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    const [pnlRes, balRes, ivaRes, trendsRes, topRes, posRes] = await Promise.all([
+      fetch('/api/reports?type=pnl'),
+      fetch('/api/reports?type=balance'),
+      fetch('/api/reports?type=iva'),
+      fetch('/api/reports?type=trends'),
+      fetch('/api/reports?type=top-products'),
+      fetch('/api/pos/status'),
+    ]);
+    if (pnlRes.ok) setPnl(await pnlRes.json());
+    if (balRes.ok) setBalance(await balRes.json());
+    if (ivaRes.ok) setIva(await ivaRes.json());
+    if (trendsRes.ok) setTrends(await trendsRes.json());
+    if (topRes.ok) setTopProducts(await topRes.json());
+    if (posRes.ok) setPosStatus(await posRes.json());
+  }, []);
 
   useEffect(() => {
     setLoading(true);
-    async function fetchData() {
-      try {
-        const [pnlRes, balRes, ivaRes, trendsRes, topRes] = await Promise.all([
-          fetch('/api/reports?type=pnl'),
-          fetch('/api/reports?type=balance'),
-          fetch('/api/reports?type=iva'),
-          fetch('/api/reports?type=trends'),
-          fetch('/api/reports?type=top-products'),
-        ]);
-        if (pnlRes.ok) setPnl(await pnlRes.json());
-        if (balRes.ok) setBalance(await balRes.json());
-        if (ivaRes.ok) setIva(await ivaRes.json());
-        if (trendsRes.ok) setTrends(await trendsRes.json());
-        if (topRes.ok) setTopProducts(await topRes.json());
-      } catch {
-        // ignore
-      } finally {
-        setLoading(false);
-      }
+    fetchData().finally(() => setLoading(false));
+  }, [fetchData]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await fetch('/api/pos/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: 30 }),
+      });
+      const data = await res.json();
+      setSyncMsg(data.message || 'Sincronizado correctamente.');
+      await fetchData();
+    } catch {
+      setSyncMsg('Error al sincronizar.');
+    } finally {
+      setSyncing(false);
     }
-    fetchData();
-  }, []);
+  };
 
   if (loading) {
     return (
@@ -109,6 +143,71 @@ export default function ReportsPanel() {
       </div>
 
       <div className="p-4 space-y-4">
+        {/* POS Sync Header */}
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <Monitor className="h-3.5 w-3.5 text-indigo-400" /> Sistemas POS
+            </h3>
+            <button
+              type="button"
+              onClick={handleSync}
+              disabled={syncing}
+              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium text-indigo-400 hover:bg-indigo-500/10 transition disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Sincronizando...' : 'Sincronizar datos'}
+            </button>
+          </div>
+
+          {syncMsg && (
+            <p className="text-[10px] text-emerald-400 mb-2">{syncMsg}</p>
+          )}
+
+          {posStatus && (
+            <>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {posStatus.systems.map((sys) => (
+                  <div
+                    key={sys.id}
+                    className="flex items-center gap-1.5 rounded-md bg-slate-50 dark:bg-slate-800/50 px-2 py-1"
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${
+                      sys.status === 'connected' ? 'bg-emerald-400' :
+                      sys.status === 'error' ? 'bg-rose-400' : 'bg-slate-400'
+                    }`} />
+                    <span className="text-[11px] text-slate-600 dark:text-slate-400">{sys.name}</span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {sys.transactionsCount > 0 ? `${sys.transactionsCount} tx` : '---'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-md bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1.5">
+                  <span className="text-[10px] text-slate-400">Ventas hoy (POS)</span>
+                  <p className="text-xs font-semibold font-mono text-slate-900 dark:text-slate-100">
+                    {formatCurrency(posStatus.summary.todayTotal)}
+                  </p>
+                  <p className="text-[10px] text-slate-400">{posStatus.summary.todayTransactions} transacciones</p>
+                </div>
+                <div className="rounded-md bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1.5">
+                  <span className="text-[10px] text-slate-400">Total historico POS</span>
+                  <p className="text-xs font-semibold font-mono text-slate-900 dark:text-slate-100">
+                    {formatCurrency(posStatus.systems.reduce((a, s) => a + s.totalAmount, 0))}
+                  </p>
+                  <p className="text-[10px] text-slate-400">{posStatus.summary.totalTransactions} transacciones</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {!posStatus && (
+            <p className="text-[11px] text-slate-400">Presiona &quot;Sincronizar datos&quot; para generar ventas de prueba desde sistemas POS simulados (El Cazador, POSnet, DataSystem).</p>
+          )}
+        </div>
+
         {/* Snapshot cards */}
         {pnl && (
           <div className="grid grid-cols-3 gap-2">
