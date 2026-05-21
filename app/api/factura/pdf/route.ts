@@ -3,11 +3,11 @@ import { GoogleGenAI } from '@google/genai';
 import dbConnect from '@/lib/db';
 import { getExchangeRate } from '@/lib/exchange-rate';
 import { Transaction, syncTransactionItemsToInventory } from '@/models/Schemas';
+import { detectDocumentType } from '@/lib/fiscal-engine/document-detector';
+import { processDocument } from '@/lib/fiscal-engine/pipeline';
+import { DocumentoProcesado } from '@/lib/types';
 
-const genAI = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || '',
-});
-
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 const visionModel = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
 
 export async function POST(req: NextRequest) {
@@ -31,38 +31,20 @@ export async function POST(req: NextRequest) {
 
     const currentExchangeRate = await getExchangeRate();
 
+    const detection = detectDocumentType({ originalName: file.name });
+
     const systemInstruction = [
-      'Eres FacturaBot Core, el motor de OCR, análisis fiscal y costeo de importaciones de un ecosistema SaaS fintech para retail en Costa Rica.',
-      'Tu tarea principal es procesar texto de documentos (PDFs, imágenes OCR, tickets, facturas electrónicas, invoices internacionales o pólizas aduanales) y estructurarlo en un objeto JSON estricto.',
-
-      'Reglas Clave de Clasificación y Deducibilidad (Ley N° 7092 - Costa Rica):',
-      '- **purchaseType:** Clasifica el documento como \'product_purchase\' (bienes tangibles para inventario), \'service_contract\' (servicios recurrentes/acuerdos), u \'operational_expense\' (gastos corrientes no contractuales).',
-      '- **isDeductibleHacienda:** Evalúa rigurosamente si el gasto es útil, necesario y pertinente para producir la renta o conservar la fuente del negocio retail.',
-      '  - **Aceptados (Deducibles):** Costo de mercancías, fletes y acarreos de productos, servicios públicos del local comercial, software de facturación y marketing/publicidad.',
-      '  - **Rechazados (No Deducibles):** Compras de supermercado con alimentos de consumo personal, artículos del hogar, licores, ropa sin distintivos de uniforme. También, si identificas un \'Gasto personal del dueño\', márcalo como NO DEDUCIBLE.',
-      '  - **Consideraciones específicas:**',
-      '    - \'Mercadería nacional\' (product_purchase): Deducible (costo de ventas), XML Hacienda obligatorio.',
-      '    - \'Mercadería importada\' (product_purchase): Deducible (parte del costo de producto), requiere póliza aduanal. Extrae FOB, flete, seguro para cálculo CIF.',
-      '    - \'Servicio profesional\' (service_contract): Deducible con retención del 15% (verifica retención si aplica).',
-      '    - \'Activo fijo\' (product_purchase/operational_expense): Deducible vía depreciación, no gasto directo.',
-      '    - \'Flete nacional\' (operational_expense): Deducible, Gasto transporte (5-1400).',
-      '    - \'Flete importación\' (product_purchase): NO es gasto, es COSTO del producto. Extrae este monto para el cálculo CIF.',
-      '    - \'Arrendamiento\' (service_contract): Deducible, Gasto alquiler (5-1300).',
-      '    - \'Publicidad\' (operational_expense): Deducible con límite (máx 1% ingresos brutos).',
-      '    - \'Gastos de representación\' (operational_expense): Parcialmente deducible (máx 1%).',
-      '- **suggestedAccountCode / suggestedAccountName:** Mapea a una de las siguientes cuentas clave:',
-      '  - \'1-1-03-01\' | Inventario de Mercancías (product_purchase válidos)',
-      '  - \'5-1-01-01\' | Gasto por Servicios Contratados (service_contract)',
-      '  - \'5-1-02-05\' | Gasto por Alquileres (arrendamiento de locales comerciales)',
-      '  - \'5-1-03-10\' | Gasto por Servicios Públicos (luz, agua, telecomunicaciones comerciales)',
-      '  - \'5-1-04-01\' | Gasto por Fletes y Transportes (fletes nacionales)',
-      '  - \'5-1-99-01\' | Gastos No Deducibles (cualquier documento con isDeductibleHacienda: false)',
-
-      'Para documentos tipo \'foreign_invoice\' o \'customs_policy\' relacionados con importaciones, extrae los siguientes componentes para el cálculo del costo de importación: Valor FOB, Seguro, Flete internacional, % arancel (para DAI), IVA importación, Almacenaje, Honorarios agente aduanal y Otros cargos. Es CRÍTICO diferenciar entre GASTO y COSTO en las importaciones.',
-      'Para cada línea de producto, si un código de producto o SKU es visible, extráelo en el campo "sku". Si no hay SKU, puedes omitir el campo sku para ese item.',
+      'Eres FacturaBot Core, el motor de extracción fiscal para PYMEs en Costa Rica.',
+      'Procesas PDFs de documentos financieros y extraes la información en JSON estructurado.',
+      'Extrae todos los campos visibles: emisor, número de documento, fecha, moneda, items, subtotales, impuestos, totales.',
+      'Si el documento es internacional (inglés, USD, EUR, etc.), márcalo como origin: "international".',
+      'Para servicios digitales (AWS, Stripe, Shopify, Google, Adobe, etc.), identifícalos como servicios del exterior.',
+      'Para documentos de importación, extrae FOB, flete y seguro. Identifica polizas aduanales, B/L, airway bills.',
+      'No inventes valores que no estén visibles en el documento.',
+      'Si es una proforma invoice, márcalo claramente como no válido para contabilización.',
     ].join('\n');
 
-    const userPrompt = `Analiza este PDF. El tipo de cambio actual para el día de hoy es de ${currentExchangeRate} CRC por 1 USD. Extrae las líneas de productos detalladamente si son visibles.`;
+    const userPrompt = `Analiza este PDF. Tipo de cambio actual: ${currentExchangeRate} CRC/USD. Extrae los datos en JSON.`;
 
     const responseSchema = {
       type: 'OBJECT',
@@ -70,33 +52,30 @@ export async function POST(req: NextRequest) {
         metadata: {
           type: 'OBJECT',
           properties: {
-            documentType: { type: 'STRING', enum: ['hacienda_xml', 'national_pdf', 'foreign_invoice', 'pos_ticket', 'customs_policy'] },
+            documentType: { type: 'STRING', enum: ['hacienda_xml', 'national_pdf', 'foreign_invoice', 'pos_ticket', 'customs_policy', 'foreign_service', 'airway_bill', 'proforma_invoice'] },
             origin: { type: 'STRING', enum: ['national', 'international'] },
             documentId: { type: 'STRING' },
             issueDate: { type: 'STRING' },
+            dueDate: { type: 'STRING' },
             currency: { type: 'STRING' },
             exchangeRate: { type: 'NUMBER' },
+            paymentMethod: { type: 'STRING' },
+            poNumber: { type: 'STRING' },
+            language: { type: 'STRING' },
           },
-          required: ['documentType', 'origin', 'documentId', 'issueDate', 'currency', 'exchangeRate'],
+          required: ['documentType', 'origin', 'currency'],
         },
         issuer: {
           type: 'OBJECT',
           properties: {
             name: { type: 'STRING' },
             idNumber: { type: 'STRING' },
+            taxIdType: { type: 'STRING' },
+            address: { type: 'STRING' },
+            phone: { type: 'STRING' },
+            email: { type: 'STRING' },
+            country: { type: 'STRING' },
           },
-          required: ['name', 'idNumber'],
-        },
-        fiscalAnalysis: {
-          type: 'OBJECT',
-          properties: {
-            purchaseType: { type: 'STRING', enum: ['product_purchase', 'service_contract', 'operational_expense'] },
-            isDeductibleHacienda: { type: 'BOOLEAN' },
-            haciendaJustification: { type: 'STRING' },
-            suggestedAccountCode: { type: 'STRING' },
-            suggestedAccountName: { type: 'STRING' },
-          },
-          required: ['purchaseType', 'isDeductibleHacienda', 'haciendaJustification', 'suggestedAccountCode', 'suggestedAccountName'],
         },
         items: {
           type: 'ARRAY',
@@ -108,10 +87,11 @@ export async function POST(req: NextRequest) {
               quantity: { type: 'NUMBER' },
               unitPriceForeign: { type: 'NUMBER' },
               discount: { type: 'NUMBER' },
+              subtotalForeign: { type: 'NUMBER' },
               taxAmountForeign: { type: 'NUMBER' },
               totalLineForeign: { type: 'NUMBER' },
             },
-            required: ['description', 'quantity', 'unitPriceForeign', 'discount', 'taxAmountForeign', 'totalLineForeign'],
+            required: ['description', 'quantity', 'unitPriceForeign', 'totalLineForeign'],
           },
         },
         totals: {
@@ -120,89 +100,96 @@ export async function POST(req: NextRequest) {
             subTotalForeign: { type: 'NUMBER' },
             taxAmountForeign: { type: 'NUMBER' },
             grandTotalForeign: { type: 'NUMBER' },
+            totalDiscount: { type: 'NUMBER' },
           },
           required: ['subTotalForeign', 'taxAmountForeign', 'grandTotalForeign'],
         },
       },
-      required: ['metadata', 'issuer', 'fiscalAnalysis', 'items', 'totals'],
+      required: ['metadata', 'issuer', 'items', 'totals'],
     };
 
     const response = await genAI.models.generateContent({
       model: visionModel,
       contents: [
-        {
-          inlineData: {
-            data: base64Pdf,
-            mimeType: 'application/pdf',
-          },
-        },
-        {
-          text: userPrompt,
-        },
+        { inlineData: { data: base64Pdf, mimeType: 'application/pdf' } },
+        { text: userPrompt },
       ],
       config: {
-        systemInstruction: systemInstruction,
+        systemInstruction,
         responseMimeType: 'application/json',
-        responseSchema: responseSchema,
+        responseSchema,
         temperature: 0.1,
       },
     });
 
     const responseText = response.text;
-    console.log('Gemini PDF API Response:', responseText);
     if (!responseText) {
-      throw new Error('Gemini extracted an empty response.');
+      throw new Error('Gemini extrajo un cuerpo de texto vacío.');
     }
 
     const extracted = JSON.parse(responseText);
-
     if (!extracted.metadata) {
       throw new Error('Invalid AI extraction format');
     }
 
-    const rate = extracted.metadata.currency === 'CRC' ? 1.0 : extracted.metadata.exchangeRate || currentExchangeRate;
-    const grandTotalCrc = Math.round(extracted.totals.grandTotalForeign * rate);
-
-    const itemsWithTaxRate = (extracted.items || []).map((item: any) => {
-      const lineTotal = item.totalLineForeign || 0;
-      const taxAmt = item.taxAmountForeign || 0;
-      const subTotal = lineTotal - taxAmt;
-      return {
-        ...item,
-        taxRate: subTotal > 0 ? Math.round((taxAmt / subTotal) * 100) / 100 : 0,
-      };
+    const result: DocumentoProcesado = await processDocument({
+      originalName: file.name,
+      extractedText: responseText,
+      mimeType: 'application/pdf',
+      tipoCambio: currentExchangeRate,
+      llmExtraction: extracted,
     });
+
+    const mappedItems = result.lineas_detalle.map((line) => ({
+      sku: line.codigo_producto || undefined,
+      description: line.descripcion || 'Producto',
+      quantity: line.cantidad || 1,
+      unitPriceForeign: line.precio_unitario || 0,
+      discount: line.descuento_monto || 0,
+      taxRate: line.impuesto_tarifa_porcentaje || 0,
+      taxAmountForeign: line.impuesto_monto || 0,
+      totalLineForeign: line.total_linea || 0,
+    }));
+
+    const rate = result.totales.tipo_cambio_a_crc || currentExchangeRate;
+    const grandTotalCrc = result.totales.total_documento_crc ||
+      Math.round((result.totales.total_documento || 0) * rate);
 
     const transaction = await Transaction.create({
       type: 'PURCHASE',
       source: 'OCR',
-      documentType: extracted.metadata.documentType || 'foreign_invoice',
-      origin: extracted.metadata.origin || 'international',
-      documentId: extracted.metadata.documentId || `PDF-${Date.now()}`,
-      merchantName: extracted.issuer.name || 'Comercio no identificado',
-      merchantTaxId: extracted.issuer.idNumber || '0-000-000000',
-      currency: extracted.metadata.currency || 'USD',
+      documentType: 'foreign_invoice',
+      origin: result.emisor.pais === 'CR' ? 'national' : 'international',
+      documentId: result.identificacion.numero_documento || `PDF-${Date.now()}`,
+      merchantName: result.emisor.nombre || 'Comercio no identificado',
+      merchantTaxId: result.emisor.numero_identificacion || '0-000-000000',
+      currency: result.identificacion.moneda_original || 'USD',
       exchangeRate: rate,
-      items: itemsWithTaxRate,
-      subTotalForeign: extracted.totals.subTotalForeign || 0,
-      taxAmountForeign: extracted.totals.taxAmountForeign || 0,
-      grandTotalForeign: extracted.totals.grandTotalForeign || 0,
+      items: mappedItems,
+      subTotalForeign: result.totales.subtotal_sin_impuestos || 0,
+      taxAmountForeign: result.totales.total_impuestos || 0,
+      grandTotalForeign: result.totales.total_documento || 0,
       grandTotalCrc,
       fiscalAnalysis: {
-        purchaseType: extracted.fiscalAnalysis.purchaseType,
-        isDeductibleHacienda: extracted.fiscalAnalysis.isDeductibleHacienda,
-        haciendaJustification: extracted.fiscalAnalysis.haciendaJustification,
-        suggestedAccountCode: extracted.fiscalAnalysis.suggestedAccountCode,
-        suggestedAccountName: extracted.fiscalAnalysis.suggestedAccountName,
+        purchaseType: result.lineas_detalle[0]?.clasificacion_tipo_compra === 'mercaderia'
+          ? 'product_purchase'
+          : result.lineas_detalle[0]?.clasificacion_tipo_compra === 'servicio_profesional'
+            ? 'service_contract'
+            : 'operational_expense',
+        isDeductibleHacienda: result.clasificacion_fiscal.total_deducible_hacienda > 0,
+        haciendaJustification: result.clasificacion_fiscal.flags.join('; '),
+        suggestedAccountCode: result.lineas_detalle[0]?.cuenta_contable_sugerida || '5-1900',
+        suggestedAccountName: result.lineas_detalle[0]?.nombre_cuenta_sugerida || 'Otros gastos operativos',
       },
     });
 
-    await syncTransactionItemsToInventory(transaction.items, transaction.type, transaction.exchangeRate);
+    await syncTransactionItemsToInventory(mappedItems, 'PURCHASE', rate);
 
     return NextResponse.json({
-      message: 'PDF processed and structured successfully',
+      message: 'PDF procesado exitosamente con motor fiscal',
       transactionId: transaction._id,
       data: transaction,
+      resultado: result,
     });
   } catch (error: unknown) {
     console.error('Gemini PDF Error:', error);
