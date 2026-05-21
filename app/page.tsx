@@ -165,7 +165,7 @@ export default function DashboardPage() {
           </span>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-[1fr_2fr_360px] xl:items-start">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-[1fr_2fr_360px ] xl:items-start">
           <section className="order-2 space-y-5 md:order-1 xl:order-1">
             <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-800">
               {tabs.map((t) => (
@@ -184,12 +184,11 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-
-            {leftTab === 'upload' && <UploadZone onUploadComplete={loadDashboardData} />}
-            {leftTab === 'prices' && <PriceManager inventoryItems={inventoryItems} onUpdated={loadDashboardData} />}
-            {leftTab === 'import' && <LandedCostManager onApplied={loadDashboardData} />}
-            {leftTab === 'add' && <AddProductPanel onCreated={loadDashboardData} />}
-            {leftTab === 'reports' && <ReportsPanel />}
+              {leftTab === 'upload' && <UploadZone onUploadComplete={loadDashboardData} />}
+              {leftTab === 'prices' && <PriceManager inventoryItems={inventoryItems} onUpdated={loadDashboardData} />}
+              {leftTab === 'import' && <LandedCostManager inventoryItems={inventoryItems} onApplied={loadDashboardData} />}
+              {leftTab === 'add' && <AddProductPanel onCreated={loadDashboardData} />}
+              {leftTab === 'reports' && <ReportsPanel />}
 
             <InventoryTable inventoryItems={inventoryItems} alerts={alerts} />
           </section>
@@ -227,6 +226,13 @@ export default function DashboardPage() {
                       Transacciones PDF
                     </a>
                     <a
+                      href="/api/export/inventory?format=xlsx"
+                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
+                      Inventario XLSX
+                    </a>
+                    <a
                       href="/api/export/inventory?format=pdf"
                       className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
                     >
@@ -260,8 +266,9 @@ export default function DashboardPage() {
             <SalesChart />
           </section>
 
-          <ChatPanel />
         </div>
+
+        <ChatPanel />
       </div>
     </div>
   );

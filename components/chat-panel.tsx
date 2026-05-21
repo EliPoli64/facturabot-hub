@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, SendHorizonal } from 'lucide-react';
+import { Bot, SendHorizonal, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from '@/lib/dashboard-types';
@@ -14,35 +14,19 @@ export default function ChatPanel() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [isDesktop, setIsDesktop] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(min-width: 1280px)');
-    const updateBreakpoint = () => {
-      const desktop = mediaQuery.matches;
-      setIsDesktop(desktop);
-      if (desktop) {
-        setUnreadCount(0);
-        setIsChatOpen(false);
-      }
-    };
-    updateBreakpoint();
-    mediaQuery.addEventListener('change', updateBreakpoint);
-    return () => mediaQuery.removeEventListener('change', updateBreakpoint);
-  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
   useEffect(() => {
-    if (isChatOpen && !isDesktop) {
+    if (isChatOpen) {
       window.setTimeout(() => chatInputRef.current?.focus(), 180);
     }
-  }, [isChatOpen, isDesktop]);
+  }, [isChatOpen]);
 
   const sendMessage = useCallback(async (message: string) => {
     const trimmed = message.trim();
@@ -69,7 +53,7 @@ export default function ChatPanel() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, botMsg]);
-      if (!isChatOpen && !isDesktop) {
+      if (!isChatOpen) {
         setUnreadCount((c) => c + 1);
       }
     } catch (error) {
@@ -86,7 +70,7 @@ export default function ChatPanel() {
     } finally {
       setIsLoading(false);
     }
-  }, [isChatOpen, isDesktop]);
+  }, [isChatOpen]);
 
   function handleSubmit(): void {
     void sendMessage(input);
@@ -121,9 +105,16 @@ export default function ChatPanel() {
     });
   }
 
-  const chatUi = (className: string, mobile: boolean) => (
-    <div className={className}>
-      <div className="flex h-12 items-center justify-between border-b border-slate-800 px-4">
+  const floatingWindow = (
+    <div
+      className={`flex w-[420px] h-[640px] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl transition-all duration-300 ${
+        isChatOpen
+          ? 'pointer-events-auto scale-100 opacity-100'
+          : 'pointer-events-none scale-95 opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-800 px-4">
         <div className="flex items-center gap-3">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-white">
             <Bot className="h-4 w-4" />
@@ -136,30 +127,17 @@ export default function ChatPanel() {
             </span>
           </div>
         </div>
-        {!isDesktop && (
-          <button
-            type="button"
-            onClick={() => setIsChatOpen(false)}
-            aria-label="Cerrar chat"
-            className="rounded-lg border border-slate-700 p-1.5 text-slate-400 transition hover:border-slate-600 hover:text-slate-100"
-          >
-            <ChevronDown className="h-4 w-4 md:hidden" />
-            <span className="hidden md:inline">
-              <ChevronRight className="h-4 w-4 rotate-180" />
-            </span>
-          </button>
-        )}
-      </div>
-
-      {mobile && (
         <button
           type="button"
           onClick={() => setIsChatOpen(false)}
           aria-label="Cerrar chat"
-          className="mx-auto mt-3 h-1.5 w-14 rounded-full bg-slate-700 md:hidden"
-        />
-      )}
+          className="rounded-lg border border-slate-700 p-1.5 text-slate-400 transition hover:border-slate-600 hover:text-slate-100"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
 
+      {/* Message area */}
       <div className="flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
         <div className="space-y-4">
           {messages.map((message) => (
@@ -217,7 +195,8 @@ export default function ChatPanel() {
         </div>
       )}
 
-      <div className="border-t border-slate-800 px-4 py-3">
+      {/* Input area */}
+      <div className="shrink-0 border-t border-slate-800 px-4 py-3">
         <div className="-mx-1 mb-3 flex gap-2 overflow-x-auto px-1 pb-1">
           {quickChips.map((chip) => (
             <button
@@ -255,28 +234,19 @@ export default function ChatPanel() {
 
   return (
     <>
-      <aside className="order-3 hidden xl:block">
-        {chatUi(
-          'sticky top-14 flex h-[calc(100vh-4.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900',
-          false,
-        )}
-      </aside>
-
-      <div className={`fixed inset-0 z-50 xl:hidden ${isChatOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+      {/* Overlay backdrop */}
+      <div className={`fixed inset-0 z-50 flex items-center justify-center ${isChatOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}>
         <button
           type="button"
           aria-label="Cerrar chat"
+          tabIndex={-1}
           onClick={() => setIsChatOpen(false)}
           className={`absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity duration-300 ${isChatOpen ? 'opacity-100' : 'opacity-0'}`}
         />
-        {chatUi(
-          `absolute bottom-0 left-0 right-0 flex h-[92dvh] flex-col overflow-hidden rounded-t-[28px] border border-slate-800 bg-slate-900 transition-transform duration-300 ease-out md:left-auto md:right-0 md:top-0 md:h-full md:w-[380px] md:rounded-none md:rounded-l-[28px] ${
-            isChatOpen ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-x-full md:translate-y-0'
-          }`,
-          true,
-        )}
+        {floatingWindow}
       </div>
 
+      {/* FAB to open chat */}
       <button
         type="button"
         aria-label="Abrir chat"
@@ -284,7 +254,7 @@ export default function ChatPanel() {
           setIsChatOpen(true);
           setUnreadCount(0);
         }}
-        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-xl transition hover:bg-indigo-500 xl:hidden"
+        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-xl transition hover:bg-indigo-500"
       >
         <Bot className="h-5 w-5" />
         {unreadCount > 0 && (

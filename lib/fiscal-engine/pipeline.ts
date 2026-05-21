@@ -17,6 +17,7 @@ import {
 import { detectDocumentType, DetectionResult } from '@/lib/fiscal-engine/document-detector';
 import { extractFromCrXml, CrXmlExtracted, RawLine } from '@/lib/fiscal-engine/cr-xml-extractor';
 import { extractFromCfdi, CfdiExtracted, CfdiRawLine } from '@/lib/fiscal-engine/cfdi-extractor';
+import { extractFromGenericXml, GenericXmlExtracted } from '@/lib/fiscal-engine/generic-xml-extractor';
 import { classifyLine, ClassificationResult } from '@/lib/fiscal-engine/rules/costa-rica/deducibility';
 import { findRetentions, RetentionParams } from '@/lib/fiscal-engine/rules/costa-rica/retentions';
 import {
@@ -620,5 +621,118 @@ export async function processDocument(input: {
     return processFromCfdi(extracted, extracted.totales.tipo_cambio_a_crc ?? tipoCambio ?? null);
   }
 
+  if (rawContent && detection.tipo === 'supplier_invoice') {
+    const extracted = await extractFromGenericXml(rawContent);
+    return processGenericXml(extracted, tipoCambio ?? null);
+  }
+
   throw new Error(`No se pudo procesar el documento. Tipo detectado: ${detection.tipo}`);
+}
+
+function processGenericXml(extracted: GenericXmlExtracted, tipoCambio: number | null): DocumentoProcesado {
+  const flags: string[] = [];
+  const esInternacional = true;
+  const moneda = extracted.identificacion.moneda_original;
+
+  if (moneda && moneda !== 'CRC' && tipoCambio === null) {
+    flags.push('TIPO_CAMBIO_REQUERIDO');
+  }
+
+  const lines: LineaDetalleOutput[] = extracted.lineas.map((rl, idx) => {
+    const pUnit = rl.precioUnitario;
+    const cantidad = rl.cantidad;
+    const total = rl.total;
+    const desc = rl.descripcion;
+
+    const subTotal = total ?? (pUnit && cantidad ? pUnit * cantidad : 0);
+    const cls = classifyLine(desc, pUnit, cantidad, esInternacional);
+
+    for (const f of cls.flags) {
+      if (!flags.includes(f)) flags.push(f);
+    }
+
+    return {
+      numero_linea: idx + 1,
+      codigo_producto: rl.codigo,
+      codigo_cabys: null,
+      codigo_hs: null,
+      descripcion: desc,
+      cantidad,
+      unidad_medida: null,
+      precio_unitario: pUnit,
+      descuento_monto: null,
+      descuento_porcentaje: null,
+      subtotal_linea: subTotal,
+      impuesto_tipo: null,
+      impuesto_tarifa_porcentaje: null,
+      impuesto_monto: null,
+      total_linea: total ?? subTotal,
+      clasificacion_tipo_compra: cls.tipo_compra,
+      cuenta_contable_sugerida: cls.accountCode,
+      nombre_cuenta_sugerida: cls.accountCode,
+      deducible_hacienda: cls.deducibilidad as Deducibilidad,
+      razon_deducibilidad: cls.razon,
+      aplica_retencion: false,
+      porcentaje_retencion: null,
+    };
+  });
+
+  const emisor: IdentificacionParte = {
+    ...extracted.emisor,
+    pais: extracted.emisor.pais ?? 'US',
+  };
+
+  const clasificacionResult = computeFiscalSummary(lines, flags, emisor, moneda);
+  const clasificacionFiscal = clasificacionResult.clasificacionFiscal;
+
+  const importContext = { pais_origen: extracted.emisor.pais, moneda_original: moneda, tipo_cambio: tipoCambio };
+  const importacion = computeImportSection(lines, esInternacional, clasificacionFiscal.flags, importContext);
+
+  const totalIva = extracted.totales.total_iva ?? 0;
+
+  const asiento = generateJournalEntry({
+    fecha: extracted.identificacion.fecha_emision,
+    referencia: extracted.identificacion.numero_documento,
+    tipoCompra: clasificacionFiscal.tipoPredominante,
+    esNacional: false,
+    esCredito: false,
+    subtotal: extracted.totales.subtotal_sin_impuestos,
+    totalIva,
+    totalDocumento: extracted.totales.total_documento,
+    importacion: importacion.es_documento_importacion ? importacion : undefined,
+    aplicaRetencion: clasificacionResult.retenciones.aplica,
+    montoRetencion: clasificacionFiscal.monto_retencion_total,
+    montoBruto: extracted.totales.subtotal_sin_impuestos ?? 0,
+  });
+
+  return {
+    meta: {
+      ...extracted.meta,
+      advertencias: [...extracted.meta.advertencias, ...clasificacionFiscal.flags],
+    },
+    identificacion: extracted.identificacion,
+    emisor,
+    receptor: {
+      nombre: null, nombre_comercial: null, tipo_identificacion: null,
+      numero_identificacion: null, pais: 'CR', direccion_completa: null,
+      telefono: null, correo: null, codigo_actividad_ciiu: null,
+    },
+    lineas_detalle: lines,
+    totales: {
+      ...extracted.totales,
+      total_documento_crc: tipoCambio && extracted.totales.total_documento
+        ? Math.round(extracted.totales.total_documento * tipoCambio)
+        : null,
+    },
+    importacion,
+    asiento_contable_sugerido: asiento,
+    clasificacion_fiscal: {
+      total_deducible_hacienda: clasificacionFiscal.total_deducible,
+      total_no_deducible: clasificacionFiscal.total_no_deducible,
+      total_costo_inventario: clasificacionFiscal.total_costo_inventario,
+      requiere_retencion: clasificacionResult.retenciones.aplica,
+      monto_retencion_total: clasificacionFiscal.monto_retencion_total,
+      flags: clasificacionFiscal.flags,
+    },
+  };
 }

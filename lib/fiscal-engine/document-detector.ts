@@ -76,6 +76,19 @@ function detectFromContent(raw: string): DetectionResult | null {
     };
   }
 
+  const hasReceiptRoot = /\s*<receipt[\s>]/i.test(raw) || /\s*<Recibo[\s>]/i.test(raw) || /\s*<recu[\s>]/i.test(raw);
+  const hasInvoiceRoot = /\s*<[Ii]nvoice[\s>]/.test(raw);
+  const hasPurchaseOrder = /\s*<[Pp]urchase[Oo]rder[\s>]/.test(raw);
+
+  if (hasReceiptRoot || hasInvoiceRoot || hasPurchaseOrder) {
+    return {
+      tipo: 'supplier_invoice',
+      confianza: 'alta',
+      evidencia: ['XML estructurado no fiscal con datos de factura de proveedor'],
+      advertencias: ['Formato XML de proveedor no estandar — se extrae mediante parsing generico'],
+    };
+  }
+
   return null;
 }
 
