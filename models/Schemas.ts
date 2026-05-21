@@ -60,6 +60,7 @@ export interface IInventory extends Document {
   purchasePrice: number;      // Precio FOB / Precio base de compra
   landedCost: number;         // Costo real unitario puesto en bodega (Base + Prorrateo de Fletes)
   salePrice?: number;
+  taxRate: number;            // IVA rate: 0.13 (general), 0.02 (reduced), 0 (exento)
   lastImportId?: mongoose.Types.ObjectId; // ID de la última liquidación de aduanas que afectó el costo
 }
 
@@ -70,6 +71,7 @@ const inventorySchema = new Schema<IInventory>({
   purchasePrice: { type: Number, required: true },
   landedCost: { type: Number, required: true }, // Al crear un producto inicial, se iguala a purchasePrice
   salePrice: { type: Number },
+  taxRate: { type: Number, default: 0.13 },
   lastImportId: { type: Schema.Types.ObjectId, ref: 'LandedCostLiquidation' }
 }, { timestamps: true });
 
@@ -91,6 +93,7 @@ export interface ITransactionItem {
   quantity: number;
   unitPriceForeign: number;
   discount: number;
+  taxRate: number;            // IVA rate applied (0.13, 0.02, 0, etc.)
   taxAmountForeign: number;
   totalLineForeign: number;
 }
@@ -129,6 +132,7 @@ const transactionSchema = new Schema<ITransaction>({
     quantity: { type: Number, required: true },
     unitPriceForeign: { type: Number, required: true },
     discount: { type: Number, required: true, default: 0 },
+    taxRate: { type: Number, default: 0.13 },
     taxAmountForeign: { type: Number, required: true, default: 0 },
     totalLineForeign: { type: Number, required: true }
   }],
@@ -171,7 +175,7 @@ export async function syncTransactionItemsToInventory(
             landedCost: purchasePrice,
           },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
       );
     } else {
       const salePrice = item.unitPriceForeign * exchangeRate;
@@ -184,7 +188,7 @@ export async function syncTransactionItemsToInventory(
             salePrice,
           },
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
       );
     }
   }

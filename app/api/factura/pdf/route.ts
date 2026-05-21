@@ -8,16 +8,7 @@ const genAI = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
 });
 
-// Cambiado a gemini-2.5-flash como modelo base para OCR rápido y estructurado
-const visionModel = process.env.GEMINI_VISION_MODEL || "gemini-2.5-flash";
-
-function normalizeMimeType(file: File): string {
-  if (file.type) return file.type;
-  const fileName = file.name.toLowerCase();
-  if (fileName.endsWith('.png')) return 'image/png';
-  if (fileName.endsWith('.webp')) return 'image/webp';
-  return 'image/jpeg';
-}
+const visionModel = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,20 +20,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
     }
 
-    const mimeType = normalizeMimeType(file);
-    if (!mimeType.startsWith('image/')) {
-      return NextResponse.json({ error: 'Invalid file type. Please upload an image.' }, { status: 400 });
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.pdf')) {
+      return NextResponse.json({ error: 'Invalid file type. Please upload a PDF.' }, { status: 400 });
     }
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    const base64Image = buffer.toString('base64');
+    const base64Pdf = buffer.toString('base64');
 
     const currentExchangeRate = await getExchangeRate();
 
     const systemInstruction = [
       'Eres FacturaBot Core, el motor de OCR, análisis fiscal y costeo de importaciones de un ecosistema SaaS fintech para retail en Costa Rica.',
-      'Tu tarea principal es procesar texto de documentos (imágenes OCR, tickets, facturas electrónicas, invoices internacionales o pólizas aduanales) y estructurarlo en un objeto JSON estricto.',
+      'Tu tarea principal es procesar texto de documentos (PDFs, imágenes OCR, tickets, facturas electrónicas, invoices internacionales o pólizas aduanales) y estructurarlo en un objeto JSON estricto.',
 
       'Reglas Clave de Clasificación y Deducibilidad (Ley N° 7092 - Costa Rica):',
       '- **purchaseType:** Clasifica el documento como \'product_purchase\' (bienes tangibles para inventario), \'service_contract\' (servicios recurrentes/acuerdos), u \'operational_expense\' (gastos corrientes no contractuales).',
@@ -71,70 +62,69 @@ export async function POST(req: NextRequest) {
       'Para cada línea de producto, si un código de producto o SKU es visible, extráelo en el campo "sku". Si no hay SKU, puedes omitir el campo sku para ese item.',
     ].join('\n');
 
-    const userPrompt = `Analiza esta imagen. El tipo de cambio actual para el día de hoy es de ${currentExchangeRate} CRC por 1 USD. Extrae las líneas de productos detalladamente si son visibles.`;
+    const userPrompt = `Analiza este PDF. El tipo de cambio actual para el día de hoy es de ${currentExchangeRate} CRC por 1 USD. Extrae las líneas de productos detalladamente si son visibles.`;
 
-    // Definición estricta del esquema esperado según nuestro Schemas.ts expandido
     const responseSchema = {
-      type: "OBJECT",
+      type: 'OBJECT',
       properties: {
         metadata: {
-          type: "OBJECT",
+          type: 'OBJECT',
           properties: {
-            documentType: { type: "STRING", enum: ["hacienda_xml", "national_pdf", "foreign_invoice", "pos_ticket", "customs_policy"] },
-            origin: { type: "STRING", enum: ["national", "international"] },
-            documentId: { type: "STRING" },
-            issueDate: { type: "STRING" },
-            currency: { type: "STRING" },
-            exchangeRate: { type: "NUMBER" }
+            documentType: { type: 'STRING', enum: ['hacienda_xml', 'national_pdf', 'foreign_invoice', 'pos_ticket', 'customs_policy'] },
+            origin: { type: 'STRING', enum: ['national', 'international'] },
+            documentId: { type: 'STRING' },
+            issueDate: { type: 'STRING' },
+            currency: { type: 'STRING' },
+            exchangeRate: { type: 'NUMBER' },
           },
-          required: ["documentType", "origin", "documentId", "issueDate", "currency", "exchangeRate"]
+          required: ['documentType', 'origin', 'documentId', 'issueDate', 'currency', 'exchangeRate'],
         },
         issuer: {
-          type: "OBJECT",
+          type: 'OBJECT',
           properties: {
-            name: { type: "STRING" },
-            idNumber: { type: "STRING" }
+            name: { type: 'STRING' },
+            idNumber: { type: 'STRING' },
           },
-          required: ["name", "idNumber"]
+          required: ['name', 'idNumber'],
         },
         fiscalAnalysis: {
-          type: "OBJECT",
+          type: 'OBJECT',
           properties: {
-            purchaseType: { type: "STRING", enum: ["product_purchase", "service_contract", "operational_expense"] },
-            isDeductibleHacienda: { type: "BOOLEAN" },
-            haciendaJustification: { type: "STRING" },
-            suggestedAccountCode: { type: "STRING" },
-            suggestedAccountName: { type: "STRING" }
+            purchaseType: { type: 'STRING', enum: ['product_purchase', 'service_contract', 'operational_expense'] },
+            isDeductibleHacienda: { type: 'BOOLEAN' },
+            haciendaJustification: { type: 'STRING' },
+            suggestedAccountCode: { type: 'STRING' },
+            suggestedAccountName: { type: 'STRING' },
           },
-          required: ["purchaseType", "isDeductibleHacienda", "haciendaJustification", "suggestedAccountCode", "suggestedAccountName"]
+          required: ['purchaseType', 'isDeductibleHacienda', 'haciendaJustification', 'suggestedAccountCode', 'suggestedAccountName'],
         },
         items: {
-          type: "ARRAY",
+          type: 'ARRAY',
           items: {
-            type: "OBJECT",
+            type: 'OBJECT',
             properties: {
-              sku: { type: "STRING" },
-              description: { type: "STRING" },
-              quantity: { type: "NUMBER" },
-              unitPriceForeign: { type: "NUMBER" },
-              discount: { type: "NUMBER" },
-              taxAmountForeign: { type: "NUMBER" },
-              totalLineForeign: { type: "NUMBER" }
+              sku: { type: 'STRING' },
+              description: { type: 'STRING' },
+              quantity: { type: 'NUMBER' },
+              unitPriceForeign: { type: 'NUMBER' },
+              discount: { type: 'NUMBER' },
+              taxAmountForeign: { type: 'NUMBER' },
+              totalLineForeign: { type: 'NUMBER' },
             },
-            required: ["description", "quantity", "unitPriceForeign", "discount", "taxAmountForeign", "totalLineForeign"]
-          }
+            required: ['description', 'quantity', 'unitPriceForeign', 'discount', 'taxAmountForeign', 'totalLineForeign'],
+          },
         },
         totals: {
-          type: "OBJECT",
+          type: 'OBJECT',
           properties: {
-            subTotalForeign: { type: "NUMBER" },
-            taxAmountForeign: { type: "NUMBER" },
-            grandTotalForeign: { type: "NUMBER" }
+            subTotalForeign: { type: 'NUMBER' },
+            taxAmountForeign: { type: 'NUMBER' },
+            grandTotalForeign: { type: 'NUMBER' },
           },
-          required: ["subTotalForeign", "taxAmountForeign", "grandTotalForeign"]
-        }
+          required: ['subTotalForeign', 'taxAmountForeign', 'grandTotalForeign'],
+        },
       },
-      required: ["metadata", "issuer", "fiscalAnalysis", "items", "totals"]
+      required: ['metadata', 'issuer', 'fiscalAnalysis', 'items', 'totals'],
     };
 
     const response = await genAI.models.generateContent({
@@ -142,8 +132,8 @@ export async function POST(req: NextRequest) {
       contents: [
         {
           inlineData: {
-            data: base64Image,
-            mimeType,
+            data: base64Pdf,
+            mimeType: 'application/pdf',
           },
         },
         {
@@ -153,16 +143,15 @@ export async function POST(req: NextRequest) {
       config: {
         systemInstruction: systemInstruction,
         responseMimeType: 'application/json',
-        // @ts-ignore - El SDK de Google Gen AI acepta el objeto de esquema directamente
         responseSchema: responseSchema,
-        temperature: 0.1, // Baja temperatura para evitar variaciones numéricas
-      }
+        temperature: 0.1,
+      },
     });
 
     const responseText = response.text;
-    console.log("Gemini API Response:", responseText);
+    console.log('Gemini PDF API Response:', responseText);
     if (!responseText) {
-      throw new Error("Gemini extrajo un cuerpo de texto vacío.");
+      throw new Error('Gemini extracted an empty response.');
     }
 
     const extracted = JSON.parse(responseText);
@@ -171,7 +160,6 @@ export async function POST(req: NextRequest) {
       throw new Error('Invalid AI extraction format');
     }
 
-    // Calcular el gran total en colones basado en la respuesta de la IA
     const rate = extracted.metadata.currency === 'CRC' ? 1.0 : extracted.metadata.exchangeRate || currentExchangeRate;
     const grandTotalCrc = Math.round(extracted.totals.grandTotalForeign * rate);
 
@@ -185,41 +173,39 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // Persistir en MongoDB usando la nueva estructura robusta de FacturaBot
     const transaction = await Transaction.create({
-      type: 'PURCHASE', // Por defecto asumimos compra vía carga de recibo OCR
+      type: 'PURCHASE',
       source: 'OCR',
-      documentType: extracted.metadata.documentType || 'pos_ticket',
-      origin: extracted.metadata.origin || 'national',
-      documentId: extracted.metadata.documentId || `OCR-${Date.now()}`,
+      documentType: extracted.metadata.documentType || 'foreign_invoice',
+      origin: extracted.metadata.origin || 'international',
+      documentId: extracted.metadata.documentId || `PDF-${Date.now()}`,
       merchantName: extracted.issuer.name || 'Comercio no identificado',
       merchantTaxId: extracted.issuer.idNumber || '0-000-000000',
-      currency: extracted.metadata.currency || 'CRC',
+      currency: extracted.metadata.currency || 'USD',
       exchangeRate: rate,
       items: itemsWithTaxRate,
       subTotalForeign: extracted.totals.subTotalForeign || 0,
       taxAmountForeign: extracted.totals.taxAmountForeign || 0,
       grandTotalForeign: extracted.totals.grandTotalForeign || 0,
-      grandTotalCrc: grandTotalCrc,
+      grandTotalCrc,
       fiscalAnalysis: {
         purchaseType: extracted.fiscalAnalysis.purchaseType,
         isDeductibleHacienda: extracted.fiscalAnalysis.isDeductibleHacienda,
         haciendaJustification: extracted.fiscalAnalysis.haciendaJustification,
         suggestedAccountCode: extracted.fiscalAnalysis.suggestedAccountCode,
         suggestedAccountName: extracted.fiscalAnalysis.suggestedAccountName,
-      }
+      },
     });
 
     await syncTransactionItemsToInventory(transaction.items, transaction.type, transaction.exchangeRate);
 
     return NextResponse.json({
-      message: 'Image processed and structured successfully',
+      message: 'PDF processed and structured successfully',
       transactionId: transaction._id,
       data: transaction,
     });
-
   } catch (error: unknown) {
-    console.error('Gemini Image Error:', error);
+    console.error('Gemini PDF Error:', error);
     const message = error instanceof Error ? error.message : 'Internal Server Error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
