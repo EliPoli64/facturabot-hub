@@ -63,7 +63,7 @@ export type SortKey =
 
 export type SortDirection = 'asc' | 'desc' | null;
 
-export type LeftTab = 'upload' | 'pos' | 'prices' | 'add' | 'reports';
+export type LeftTab = 'upload' | 'pos' | 'prices' | 'add' | 'reports' | 'import';
 
 export interface CartItem {
   sku: string;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BarChart3, Download, FileDown, FileSpreadsheet, PackagePlus, RefreshCw, Upload, ShoppingCart, Tag } from 'lucide-react';
+import { BarChart3, Download, FileDown, FileSpreadsheet, PackagePlus, RefreshCw, Upload, ShoppingCart, Tag, Globe } from 'lucide-react';
 import type { AlertItem, InventoryItem, KPIData, LeftTab, SectionErrors } from '@/lib/dashboard-types';
 import DashboardHeader from '@/components/dashboard-header';
 import UploadZone from '@/components/upload-zone';
@@ -13,6 +13,7 @@ import PriceManager from '@/components/price-manager';
 import AddProductPanel from '@/components/add-product-panel';
 import SalesChart from '@/components/sales-chart';
 import ReportsPanel from '@/components/reports-panel';
+import LandedCostManager from '@/components/landed-cost-manager';
 
 export default function DashboardPage() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -138,6 +139,7 @@ export default function DashboardPage() {
   const tabs: { key: LeftTab; label: string; icon: React.ReactNode }[] = [
     { key: 'upload', label: 'Subir', icon: <Upload className="h-3.5 w-3.5" /> },
     { key: 'prices', label: 'Precios', icon: <Tag className="h-3.5 w-3.5" /> },
+    { key: 'import', label: 'Importación', icon: <Globe className="h-3.5 w-3.5" /> },
     { key: 'add', label: 'Agregar', icon: <PackagePlus className="h-3.5 w-3.5" /> },
     { key: 'reports', label: 'Reportes', icon: <BarChart3 className="h-3.5 w-3.5" /> },
   ];
@@ -185,6 +187,7 @@ export default function DashboardPage() {
 
             {leftTab === 'upload' && <UploadZone onUploadComplete={loadDashboardData} />}
             {leftTab === 'prices' && <PriceManager inventoryItems={inventoryItems} onUpdated={loadDashboardData} />}
+            {leftTab === 'import' && <LandedCostManager onApplied={loadDashboardData} />}
             {leftTab === 'add' && <AddProductPanel onCreated={loadDashboardData} />}
             {leftTab === 'reports' && <ReportsPanel />}
 

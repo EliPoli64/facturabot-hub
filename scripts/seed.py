@@ -34,7 +34,8 @@ def load_mongo_uri() -> str:
 
 def connect(uri: str) -> pymongo.database.Database:
     client = pymongo.MongoClient(uri)
-    db_name = uri.split("/")[-1].split("?")[0]
+    parsed_db = uri.split("/")[-1].split("?")[0]
+    db_name = parsed_db if parsed_db else "facturabot"
     return client[db_name]
 
 
