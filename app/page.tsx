@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
-  Clock,
   DollarSign,
   Loader2,
   MessageSquare,
@@ -25,6 +24,38 @@ import {
   Activity
 } from 'lucide-react';
 
+type InventoryItem = {
+  sku: string;
+  name: string;
+  currentStock: number;
+  salePrice: number;
+  category: string;
+  status: string;
+};
+
+type AlertItem = {
+  sku: string;
+  message: string;
+  severity: 'high' | 'medium';
+  timestamp: string;
+};
+
+type UploadApiResponse = {
+  error?: string;
+  type?: 'PURCHASE' | 'SALE';
+  data?: {
+    merchantName?: string;
+  };
+};
+
+type StatCardProps = {
+  title: string;
+  value: string | number;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  trend: number;
+  gradient: string;
+};
+
 export default function Dashboard() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [messages, setMessages] = useState<
@@ -32,8 +63,10 @@ export default function Dashboard() {
   >([]);
   const [inputText, setInputText] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [inventory, setInventory] = useState<any[]>([]);
-  const [alerts, setAlerts] = useState<any[]>([]);
+  const [uploadMessage, setUploadMessage] = useState('');
+  const [uploadError, setUploadError] = useState(false);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [stats, setStats] = useState({
     balance: 0,
     salesToday: 0,
@@ -126,11 +159,62 @@ export default function Dashboard() {
     if (!file) return;
 
     setIsUploading(true);
+    setUploadMessage('');
+    setUploadError(false);
 
-    setTimeout(() => {
-      alert(`Factura procesada correctamente: ${file.name}`);
+    try {
+      const fileName = file.name.toLowerCase();
+      const isXml = fileName.endsWith('.xml');
+      const isImage = /\.(jpg|jpeg|png|webp)$/i.test(fileName);
+
+      if (!isXml && !isImage) {
+        throw new Error('Solo se aceptan archivos XML o imágenes.');
+      }
+
+      let response: Response;
+
+      if (isXml) {
+        response = await fetch('/api/factura/xml', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/xml'
+          },
+          body: await file.text()
+        });
+      } else {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        response = await fetch('/api/factura/image', {
+          method: 'POST',
+          body: formData
+        });
+      }
+
+      const payload: UploadApiResponse = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'No se pudo procesar el archivo.');
+      }
+
+      const successMessage = isXml
+        ? `Factura ${payload.type === 'PURCHASE' ? 'de compra' : 'de venta'} procesada correctamente.`
+        : `Imagen analizada correctamente${payload.data?.merchantName ? `: ${payload.data.merchantName}` : '.'}`;
+
+      setUploadMessage(successMessage);
+      setUploadError(false);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Ocurrió un error al subir el archivo.';
+
+      setUploadMessage(message);
+      setUploadError(true);
+    } finally {
       setIsUploading(false);
-    }, 1800);
+      e.target.value = '';
+    }
   };
 
   const handleSendMessage = () => {
@@ -197,7 +281,7 @@ export default function Dashboard() {
     icon: Icon,
     trend,
     gradient
-  }: any) => (
+  }: StatCardProps) => (
     <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/70 backdrop-blur-xl p-6 shadow-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl">
       <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-gradient-to-br opacity-10 blur-2xl ${gradient}" />
 
@@ -371,6 +455,18 @@ export default function Dashboard() {
                   />
                 </label>
               </div>
+
+              {uploadMessage && (
+                <div
+                  className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${
+                    uploadError
+                      ? 'border-red-500/30 bg-red-500/10 text-red-200'
+                      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                  }`}
+                >
+                  {uploadMessage}
+                </div>
+              )}
 
               <div className="overflow-hidden rounded-3xl border border-white/10">
                 <table className="w-full overflow-hidden">
